@@ -1,0 +1,852 @@
+<!--
+  © 2026 coticocodrila. Todos los derechos reservados.
+  Mapa Tapas y Copas - Cerro Alegre y Cerro Concepción.
+
+  Este código y su contenido (textos, curaduría de locales, diseño e
+  información asociada) son propiedad de su autor. No está autorizada
+  su copia, redistribución ni reutilización total o parcial, comercial
+  o no comercial, sin permiso previo y por escrito del autor.
+-->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mapa Tapas y Copas v04</title>
+
+<!-- ===== Google Analytics (GA4) ===== -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-B8Y59B8HPF"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){ dataLayer.push(arguments); }
+  gtag('js', new Date());
+  gtag('config', 'G-B8Y59B8HPF');
+</script>
+
+<link rel="preconnect" href="https://tiles.openfreemap.org">
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  #mapa { width: 100%; height: 100vh; background: #eeeeee; }
+
+  #loader {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 10px; background: #eeeeee; z-index: 9999;
+    color: #666; transition: opacity 0.3s ease;
+  }
+  .spinner {
+    width: 36px; height: 36px; border: 4px solid #ccc; border-top-color: #2a7a6b;
+    border-radius: 50%; animation: girar 0.8s linear infinite;
+  }
+  @keyframes girar { to { transform: rotate(360deg); } }
+
+  /* ===== Marcador con etiqueta visible tipo uMap ===== */
+  .marcador-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+  }
+  .marcador-etiqueta {
+    background: rgba(255,255,255,0.92);
+    color: #6b6b6b;
+    font-size: 11.5px;
+    font-weight: 300;
+    letter-spacing: 0.015em;
+    padding: 2px 7px;
+    border-radius: 5px;
+    white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+    margin-bottom: -9px; /* se superpone sobre el pin para verse mejor */
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    position: relative;
+    z-index: 5; /* siempre por encima del pin, y por encima de pines vecinos */
+  }
+  .marcador-pin { width: 29px; height: 36px; position: relative; z-index: 1; }
+  .marcador-logo {
+    width: 20px;
+    height: 20px;
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* ===== Modal centrado (independiente del mapa) ===== */
+  /* El "backdrop" ya NO cubre ni bloquea el mapa: solo sirve como contenedor
+     posicionador. pointer-events:none dejar pasar los clics al mapa; la tarjeta
+     en sí (#modal-card) sí captura sus propios clics. */
+  #modal-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 10000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  #modal-backdrop.activo {
+    opacity: 1;
+  }
+  #modal-card {
+    background: #fff;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 320px;
+    max-height: 70vh;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+    transform: translateY(12px);
+    transition: transform 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    pointer-events: none;
+  }
+  #modal-backdrop.activo #modal-card {
+    transform: translateY(0);
+    pointer-events: all;
+  }
+  /* #modal-content es el único hijo directo de #modal-card, y por eso DEBE
+     heredar el mismo comportamiento flex; si no, las reglas de "encogerse y
+     mostrar scroll" del contenido interno nunca llegan a aplicarse. */
+  #modal-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .popup-header {
+    background: #d05985;
+    padding: 16px 44px 16px 20px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .popup-header h3 {
+    margin: 0; color: #fff; font-size: 17px; font-weight: 600;
+    line-height: 1.3; word-break: break-word;
+  }
+  .popup-close {
+    position: absolute;
+    top: 8px; right: 10px;
+    width: 30px; height: 30px;
+    border: none;
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+    font-size: 20px;
+    border-radius: 50%;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .popup-close:hover { background: rgba(255,255,255,0.35); }
+
+  /* ===== Header del modal de registro: logo + título (no afecta .popup-header base) ===== */
+  #registro-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #registro-logo {
+    height: 30px;
+    width: auto;
+    flex-shrink: 0;
+  }
+
+
+  .popup-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1 1 auto;
+    min-height: 0; /* imprescindible para que el scroll interno funcione dentro de flexbox */
+    -webkit-overflow-scrolling: touch; /* scroll con inercia en iOS */
+    touch-action: pan-y; /* le dice explícitamente al navegador: este elemento se desplaza verticalmente */
+    overscroll-behavior: contain; /* evita que el "rebote" del scroll se filtre hacia el mapa de fondo */
+  }
+  .popup-body { padding: 16px 20px 4px 20px; }
+  .popup-section { margin-bottom: 16px; }
+  .popup-label {
+    font-size: 12.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.04em; color: #d05985; margin-bottom: 6px;
+  }
+  .popup-section ul { margin: 0; padding-left: 20px; list-style: disc; }
+  .popup-section li { font-size: 14px; line-height: 1.5; color: #333; margin-bottom: 3px; word-wrap: break-word; }
+  /* Texto de los popups de transporte e información (párrafos sueltos
+     dentro de .popup-body, generados por textoAHtml): mismo tamaño que
+     el texto de los locales (.popup-section li) para que se vean parejos. */
+  .popup-body > p { font-size: 14px; line-height: 1.5; color: #333; margin: 0 0 10px 0; word-wrap: break-word; }
+  .popup-body > p:last-child { margin-bottom: 0; }
+  /* Popups de transporte e información (sin dirección ni botones debajo):
+     les damos más aire arriba y abajo que a los popups de locales. */
+  .popup-body-utilitario { padding-top: 22px; padding-bottom: 22px; }
+  .popup-direccion {
+    font-size: 13px; color: #666; line-height: 1.5; padding: 10px 0 16px 0;
+    border-top: 1px solid #eee; word-wrap: break-word;
+  }
+  .popup-actions {
+    display: flex; gap: 8px; padding: 12px 20px 18px 20px; flex-shrink: 0;
+  }
+  .popup-btn {
+    flex: 1; text-align: center; padding: 10px 8px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; text-decoration: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: opacity 0.15s ease;
+  }
+  .popup-btn:hover { opacity: 0.85; }
+  .popup-btn-primary { background: #d05985; color: #fff; }
+  .popup-btn-outline { background: #fff; color: #d05985; border: 1.5px solid #d05985; }
+
+  /* ===== Casilla "Estoy en este local" dentro del popup ===== */
+  .popup-visita {
+    border-top: 1px solid #eee;
+    padding-top: 12px;
+    margin-top: -4px;
+  }
+  .popup-visita label {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13.5px; font-weight: 600; color: #d05985;
+    cursor: pointer;
+  }
+  .popup-visita input[type="checkbox"] {
+    width: 17px; height: 17px; accent-color: #d05985; cursor: pointer; flex-shrink: 0;
+  }
+
+  /* ===== Contenedor de botones flotantes ===== */
+  #botones-flotantes {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  /* ===== Botón flotante "Sitio web" ===== */
+  #btn-sitio {
+    background: #fff;
+    color: #d05985;
+    border: 1.5px solid #d05985;
+    padding: 12px 22px;
+    border-radius: 30px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    text-decoration: none;
+  }
+  #btn-sitio:hover { opacity: 0.85; }
+
+  /* ===== Modal de registro (independiente del modal de locales) ===== */
+  #registro-backdrop {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 10500;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    background: rgba(0,0,0,0.25);
+  }
+  #registro-backdrop.activo { opacity: 1; pointer-events: all; }
+  #registro-card {
+    background: #fff;
+    border-radius: 14px;
+    width: 100%;
+    max-width: 340px;
+    max-height: 85vh;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+    transform: translateY(12px);
+    transition: transform 0.2s ease;
+    display: flex;
+    flex-direction: column;
+  }
+  #registro-backdrop.activo #registro-card { transform: translateY(0); }
+  .registro-scroll { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+  .registro-body { padding: 18px 20px 20px 20px; }
+  .registro-body p.registro-intro {
+    font-size: 13px; color: #555; line-height: 1.5; margin: 0 0 14px 0;
+  }
+  .registro-campo { margin-bottom: 12px; }
+  .registro-campo label {
+    display: block; font-size: 12px; font-weight: 700; color: #d05985;
+    text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 5px;
+  }
+  .registro-campo input, .registro-campo select {
+    width: 100%; box-sizing: border-box; padding: 9px 10px; font-size: 14px;
+    border: 1.5px solid #ddd; border-radius: 8px; font-family: inherit;
+    background: #fff; color: #333;
+  }
+  .registro-campo input:focus, .registro-campo select:focus { outline: none; border-color: #d05985; }
+  .registro-campo input:invalid:not(:placeholder-shown) { border-color: #c0392b; }
+  .registro-consentimiento {
+    display: flex; gap: 8px; align-items: flex-start; margin: 14px 0 4px 0;
+  }
+  .registro-consentimiento input { margin-top: 3px; flex-shrink: 0; }
+  .registro-consentimiento label { font-size: 12px; color: #555; line-height: 1.45; }
+  .registro-msg { font-size: 13px; margin-top: 10px; line-height: 1.4; }
+  .registro-msg.exito { color: #d05985; font-weight: 600; }
+  .registro-msg.error { color: #b23b3b; font-weight: 600; }
+  #registro-submit {
+    width: 100%; margin-top: 14px; padding: 11px; border: none; border-radius: 8px;
+    background: #d05985; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  #registro-submit:disabled { opacity: 0.6; cursor: default; }
+  #registro-submit:hover:not(:disabled) { opacity: 0.9; }
+</style>
+</head>
+<body>
+
+<div id="loader">
+  <div class="spinner"></div>
+  <span>Cargando mapa...</span>
+</div>
+<div id="mapa"></div>
+
+<div id="modal-backdrop">
+  <div id="modal-card">
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<!-- ===== Botones flotantes y modal de registro de usuarios (nuevo, no toca el mapa) ===== -->
+<div id="botones-flotantes">
+  <a id="btn-sitio" href="https://www.distritobac.cl" target="_blank" rel="noopener noreferrer">🌐 Distrito BAC</a>
+</div>
+
+<div id="registro-backdrop">
+  <div id="registro-card">
+    <div class="popup-header" id="registro-header">
+      <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAAAvCAYAAAB0ZU25AAAACXBIWXMAAAsSAAALEgHS3X78AAAFpklEQVRoge1a3XHjRgz+nMljZqSrIEwFx6SBYyqwUoGZmbxHqeCYCk5XQeQO6ApMd0BXYOotj/RjnpAHYEMQAsmlKSm5jL4Zzmh3AewudvFDUDdEhCvejq/+7QV86bgqcCGuClyIqwIX4qrAhViiwA0Akic7yWq+QCxRYKp+Z2CFVgBKAMkMObnw7GfOX8p8W2kn0q7M2s4LInrrU1CHgogq046Vo/lieTLqA0S0Ve08Uk4isjL5PVsPS25gcqIz1Ldlicx1pJw1gAJAA+AFwKM8LwBaGVv7rMc4pQL3AF4BHBBvjimAlWpvIvlqAA/y+3fwhvV6EvhK2IAVlwPYAfgewI0834GVlwtN3FoirumaiHbKPFpp18ZkA502n4SISmNutdDsyUcr42ti805Fjjb1YHZBTjsgq1Zr2UjfXmSP7TesbdIVxCjQKsBDYei2sumhjc2R1xJRY8a3FI9wkC2xYmL9WziYUd84ZcI5gNuoq9w3meBnVj7pLHkrAN8ukANZSwveTyxydD5xEFMKtMwHAJ8jF5Cp308AfgPwE9hPBjwbngewT6scea8i5x7An2ZND0buQeQE/3iH/l7WOE53UunTF6EQ3uGgMnI9U2MKOzW2MWMFHacx2nxLYp8FYr9CxGa5dswtPFpeoPXSmODnCjO/pdX8Yf16T8HPb8w6vL4oE7Za36nfJfg2jKFSv2/BqUILjm4/gyNlC74tU9gLrYf3E7wZ+KZr/hIcgbeqbyt9peF/wkhiPqbAzLQb065HeIG+wgNWYGX+gS7VsXLPAU/53vpDX2w6NarAZoJ3KtmsAPyI4Zt6h3inPnT7YlAD+KDa1cS8G/RvZooRXcxRYDbR1vhLxjPwTXwHDiD3hi6ZaAdM3XZgeJOBN5hhKWvyzDIFW8ZetVej8w85R+VAtSMPztTmYTaI/GLGtRO2wca2PbqM+uvSQYScvpr6QaOmfg5YUz9hD8GtlXl1LtjQiI5ikkkLm9R6isioH4VbMx6wpf5bDsmcmSNvSIFhgzZraES+ptcHWZi9tNQ/wI3DM1uBibNpD54Cp95gWuLT9+bw5A0pUN8Ye0j2NrWOLO8JF2A/RTuVSDfglMODDg6J+AndN+a3XsGOup2YYy626CfUGjnY/z2CfVzi0CRg//gotPnUhF9HLGqPrjqRghUTipkZOsdrI2Vm2k9CUwl/MzJH4/BrVOAKikUNVkIu/I0Zz4W3AJevnhVNAs4pD+AD3Y/M/w9uiM72Yb0A8FG130lfiH41+LQbhzcDbzZRfTH0Gfi9+RWsqB3810KgOyyNcDniEeEP3voUjs/zkBs+L3BpGdaHjdF78k/6XFKBY0pJZvCE4DNnjtFIuuS59GfNA44rMCt0lZLcjN2jqzxr+g34TWhrxp7BFRj79uO9Vp4G5zoZ53bo5NYzb1DfzAsly+aKBR0n81vqz2/TqLPsMyYKnwoFukhdgG/Qr9JegR16Jv1r9NOgxpGnX/gPOL5lufCtMF05ejMuacI2utl2UFpIRXbymwB8cuQlI7IAPqwEXKLKZq41Gpe6gUPJrUWoCsd8CtBl/qFqTYu4QsSbcakbGKOQb+Ar7xnHVZz/DC5pwrZ+aNs/oK+8e3DynYL9mY3e2q8NVYxTzPxQPheXVGBu2rbqa9eSozPNNY5L9436fYvjd9vgDj7ijFXvSyrwE3hDCdip36kxm+sBfcfv5XGVaZfolJgh3pcuwiXTGIBL6y9Of4njQPAINtMEx9+FE7BpFmrs/YDsIP88OFeC6STLQ9B/v6gnaC1PFkGrX/2+qFe5Gl368hl+MvuEvqnm8D9zPqAfiYM/rMB53tCn0fBJcslHqVGcs5wFdP+a0h92QvCo4Jea1kKTgDeua4epjHv5nS1PlQ7NyXFuBf7vcf2T+UJcFbgQVwUuxFWBC3FV4EL8DeVgnkwL5PrlAAAAAElFTkSuQmCC" alt="Distrito BAC" id="registro-logo">
+      <h3>Únete a la ruta</h3>
+    </div>
+    <div class="registro-scroll">
+      <div class="registro-body">
+        <p class="registro-intro">Recibe novedades, promociones y futuras rutas en Valparaíso.</p>
+        <form id="form-registro" novalidate>
+          <div class="registro-campo">
+            <label for="reg-nombre">Nombre</label>
+            <input type="text" id="reg-nombre" name="nombre" autocomplete="name" required>
+          </div>
+          <div class="registro-campo">
+            <label for="reg-email">Correo electrónico</label>
+            <input type="email" id="reg-email" name="email" autocomplete="email" required>
+          </div>
+          <div class="registro-campo">
+            <label for="reg-region">Región en que vives</label>
+            <select id="reg-region" name="region" autocomplete="address-level1" required>
+              <option value="" disabled selected>Selecciona tu región</option>
+              <option>Arica y Parinacota</option>
+              <option>Tarapacá</option>
+              <option>Antofagasta</option>
+              <option>Atacama</option>
+              <option>Coquimbo</option>
+              <option>Valparaíso</option>
+              <option>Metropolitana de Santiago</option>
+              <option>Libertador General Bernardo O'Higgins</option>
+              <option>Maule</option>
+              <option>Ñuble</option>
+              <option>Biobío</option>
+              <option>La Araucanía</option>
+              <option>Los Ríos</option>
+              <option>Los Lagos</option>
+              <option>Aysén del General Carlos Ibáñez del Campo</option>
+              <option>Magallanes y de la Antártica Chilena</option>
+            </select>
+          </div>
+          <div class="registro-consentimiento">
+            <input type="checkbox" id="reg-consentimiento" required>
+            <label for="reg-consentimiento">Acepto que mis datos sean almacenados para recibir informaciones de Barrio Alegre Concepción. Puedo solicitar su eliminación cuando quiera.</label>
+          </div>
+          <button id="registro-submit" type="submit">Enviar</button>
+          <div id="registro-msg" class="registro-msg"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+  var locales = [{"lat": -33.04258, "lon": -71.62657, "name": "Planta Baja", "html": "<div class=\"popup-header\"><h3>Planta Baja</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Empanada frita de maltón ahumado, longaniza ahumada, queso mantecoso y tomate.</li><li>Pincho de costillar ahumado sobre puré de porotos con riendas y cebollita en escabeche.</li><li>Pincho de zetas al chimichurri de perejil sobre puré de porotos con riendas (veg).</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa de vino de la casa.</li><li><em>Huesillo oxidado</em>: Whisky infusionado con miel y especias, jugo de huesillo y toque de Drambuie.</li><li><em>Mocktail</em>: Jugo de piña natural y granadina.</li></ul></div><div class=\"popup-direccion\">📍 Abtao 644, Cerro Concepción<br>⏰ Última ronda 23:30 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Planta Baja\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/qn6Lhbjbjjfj96xy5\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"plantabaja_valpo\" href=\"https://www.instagram.com/plantabaja_valpo\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04037, "lon": -71.62905, "name": "Terruá Bistró", "html": "<div class=\"popup-header\"><h3>Terruá Bistró</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Chupe de jaiba</em>: Clásico chupe de jaiba, cremoso y sabroso, servido en crujiente masa de hoja.</li><li><em>Pastel de choclo vegano</em>: Choclo cremoso, sofrito de setas, servido en crujiente masa de hoja.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Navegadon't</em>: Navegado sin alcohol a base de flor de hibiscus, naranja y especias.</li><li><em>Chirimoya alegre</em>: Chirimoya natural, Sauvignon Blanc y un toque de pisco macerado en naranja.</li></ul></div><div class=\"popup-direccion\">📍 Paseo Yugoslavo 115, Cerro Alegre<br>⏰ Última ronda 22:30 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Terruá Bistró\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/YGLdv1CER2UYXK5H8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"terruabistro\" href=\"https://www.instagram.com/terruabistro\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04046, "lon": -71.6282, "name": "La Colombina", "html": "<div class=\"popup-header\"><h3>La Colombina</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Brocheta de cerdo grillado con papas nativas, vegetales asados y pebre fresco de manzana verde picante.</li><li>Churrasca artesanal con paté de pescado ahumado, criolla cítrica de escabeche y brotes de cilantro.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Cóctel de autor</em>: Vino tinto Carmenere, gin, aperol syrup y soda.</li><li>Copa de vino gran reserva Castillo de Molina (variedades).</li></ul></div><div class=\"popup-direccion\">📍 Pasaje Apolo 91, Cerro Alegre<br>⏰ Última ronda 22:00 · Cierre 22:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"La Colombina\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/LF8C7QUgbsnqnisv9\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"lacolombina_cerroalegre\" href=\"https://www.instagram.com/lacolombina_cerroalegre\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04384, "lon": -71.62689, "name": "Terapia", "html": "<div class=\"popup-header\"><h3>Terapia</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Mar y Fuego</em>: Choripán artesanal relleno de paté de marisco y longaniza ahumada, cebolla encurtida, lactonesa, pangratto y hojas de cilantro.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Corazón Sour</em>: Vino carmenere, pisco infusionado en canela, syrup de naranja y maracujá, jugo fresco de limón y bitter de cacao.</li></ul></div><div class=\"popup-direccion\">📍 Paseo Dimalow 135, Cerro Alegre<br>⏰ Última ronda 00:30 · Cierre 01:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Terapia\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/7yK1hdABpLiAKpsZ8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"terapiavalpo\" href=\"https://www.instagram.com/terapiavalpo\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04343, "lon": -71.62791, "name": "Momo", "html": "<div class=\"popup-header\"><h3>Momo</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Tiradito de pera grillada, camote dulce con salsa de tamarindo y tofu crispy.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Spritz de vino blanco, syrup de lychee y pera, un toque de vodka y twist de naranja.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 427, Cerro Alegre<br>⏰ Última ronda 22:30 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Momo\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/b3KJb44r5MDYh7Sc8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"momovalparaiso\" href=\"https://www.instagram.com/momovalparaiso\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04358, "lon": -71.6276, "name": "Casa Alegre", "html": "<div class=\"popup-header\"><h3>Casa Alegre</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Calugas Afrodisíacas</em>: Crujientes calugas de pescado apanados con panko y sésamo, acompañado de pebre chileno y mayo de ají verde.</li><li><em>Champiñones al ajillo</em>: Champiñones salteados con ajo, mantequilla, vino blanco y perejil, sobre pan amasado tostado.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Sangría traviesa</em>: Vino pinot noir con syrup de piñas maduras y frutas cítricas frescas (manzana, mandarinas, pomelo).</li><li>Copa de vino blanco.</li><li><em>Mocktail terremoto virgen</em>: Helado de piña con tónica y jugo de pomelo, finalizado con syrup de frutos rojos y especias de la casa.</li></ul></div><div class=\"popup-direccion\">📍 Paseo Dimalow 249, Cerro Alegre<br>⏰ Última ronda 23:00 · Cierre 23:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Casa Alegre\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/pmygPygLnkbkX2D68\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"casalegrevalparaiso\" href=\"https://www.instagram.com/casalegrevalparaiso\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.0412, "lon": -71.62715, "name": "Il Paparazzo", "html": "<div class=\"popup-header\"><h3>Il Paparazzo</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Ceviche de atún o ceviche de champiñones (vegan).</li><li>Gnocchi con camarones salteados en oliva, salsa cremosa y toque de queso azul o Gnocchi Viva Italia con salsa pesto, pomodoro y parmesano.</li><li>Opción Gnocchis veganos y libres de glúten.</li><li>Tiramisú (tradicional o libre de glúten).</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa Emiliana Novas Viognier o Carmenere.</li><li>Copa Emiliana Novas Red Blend.</li><li>Copa Salvaje Blend Syrah Rousanne.</li><li>Copa Tais Rose.</li><li>Copa de espumante Amaluna Brut, viña Emiliana.</li><li>Copa de espumante o vino sin alcohol.</li></ul></div><div class=\"popup-direccion\">📍 Papudo 424, Cerro Concepción<br>⏰ Última ronda 22:00 · Cierre 22:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Il Paparazzo\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/Kkye3zvaRHhsWdko7\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"ilpaparazzovalparaiso\" href=\"https://www.instagram.com/ilpaparazzovalparaiso\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04268, "lon": -71.62645, "name": "Piano Café", "html": "<div class=\"popup-header\"><h3>Piano Café</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Crocante de mechada</em>: Tortilla dorada rellena de carne mechada y queso fundido, coronada con brotes frescos y lactonesa de la casa.</li><li><em>Crocante veggie</em>: Tortilla dorada rellena de champiñones salteados y cebolla morada caramelizada, acompañada de hummus de betarraga y brotes frescos.</li><li><em>Hojaldre de manzana</em>: Hojaldre dorado, relleno de manzanas estofadas con jengibre y nueces caramelizadas.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Sangría sin alcohol</em>: syrup de la casa, jugo de naranja, agua gasificada y toque de hierbas y cítricos.</li></ul></div><div class=\"popup-direccion\">📍 Abtao 668, Cerro Concepción<br>⏰ Última ronda 22:30 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Piano Café\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/tbitRs13Q3xRkUQe7\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"piano.cafe.valpo\" href=\"https://www.instagram.com/piano.cafe.valpo\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04318, "lon": -71.62805, "name": "Alma Mía", "html": "<div class=\"popup-header\"><h3>Alma Mía</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Tapa marina</em>: Almeja fresca en salsa verde y granita de maracujá, espuma de maracujá y shot de caldo frío de mariscos.</li><li><em>Tapa de carne</em>: Mini tortilla de rescoldo con arrollado de huaso, ensalada a la chilena, ají oro y mayonesa de perejil.</li><li><em>Tapa vegetariana</em>: Churrasca con harina de cochayuyo y chuchoca con ceviche de algas chilenas y emulsión fresca de palta.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Brisa del Valle</em>: Vino blanco, pisco, papaya chilena, limón sutil, albahaca fresca y soda.</li><li><em>Mocktail Jardín del Valle</em>: Papaya, piña, limón y syrup de romero, terminado con soda.</li><li><em>Vino tinto</em>: Carignan, Viña Ranquilhue.</li><li><em>Vino blanco</em>: Albariño, Los Vascos.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 402, Cerro Alegre<br>⏰ Última ronda 23:30 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Alma Mía\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/atLz5AkEepW7Kmqg8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"almamiavalparaiso\" href=\"https://www.instagram.com/almamiavalparaiso\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.043467, "lon": -71.627701, "name": "Terrat", "html": "<div class=\"popup-header\"><h3>Terrat</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Tortilla de papas artesanal.</li><li>Tartar de salmón marinado, sésamo, alcaparras, pepinillos y palta.</li><li>Tapa de tomate, oliva, perejil, ajo y jamón serrano sobre pan crujiente.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Sangría de la casa, Cerveza o Tequila Margarita.</li></ul></div><div class=\"popup-direccion\">📍 Paseo Dimalow 263, Cerro Alegre<br>⏰ Última ronda 16:00 · Cierre 20:40</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Terrat\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/DLkb6vWFbSx4Y2nV8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"terratvalpo\" href=\"https://www.instagram.com/terratvalpo\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04296, "lon": -71.6279, "name": "La Conquistada", "html": "<div class=\"popup-header\"><h3>La Conquistada</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Mini pastel de choclo tradicional</em>: Crujiente canasta de masa de empanada casera, rellena de pino de res y pollo, cubierta con pastelera de choclo aromatizada con albahaca fresca y gratinada al horno.</li><li><em>Mini pastel de choclo vegetariano</em>: Tarta artesanal en masa de empanada tradicional, rellena de pino vegetal a base de carne de soja y verduras, coronada con pastelera de choclo.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Borgoña de la casa</em>: Vino tinto nacional seleccionado, macerado con frutillas frescas de estación y un sutil toque de dulzor, servido bien frío.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 382, Cerro Alegre<br>⏰ Última ronda 23:30 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"La Conquistada\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/1mh5JeCyrZtH5Xc8A\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"laconquistada_valparaiso\" href=\"https://www.instagram.com/laconquistada_valparaiso\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.043862, "lon": -71.628886, "name": "Malizioso", "html": "<div class=\"popup-header\"><h3>Malizioso</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Base de focaccia, lomo krassler, alioli con mostaza dijon, chucrut, puntos de mostaza dijon y brotes.</li><li><em>Vegetariana</em>: Babaganoush con ricotta y tomates asados.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Cóctel de la casa</em>: Vino pinot noir, ron añejo, sauco, mix de cítricos, jengibre y albahaca.</li><li><em>Mocktail</em>: Jugo de piña, infusión de jamaica, limón, jengibre y sirope de pinot noir.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 532, Cerro Alegre<br>⏰ Última ronda 22:30 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Malizioso\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/ymVYmJC9Rm7z75ZM8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"malizioso.pizzeria\" href=\"https://www.instagram.com/malizioso.pizzeria\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.0419, "lon": -71.6264, "name": "Kapura", "html": "<div class=\"popup-header\"><h3>Kapura</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Carne</em>: Base crostini con beef bourguignon, toques de queso azul, cebolla al merlot y romero.</li><li><em>Vegana</em>: Base de polenta crocante con ceviche vegano (cebolla, pepino, palta, mango, manzana verde, piña, alcachofa con topping de ciboulette frito y gel de cebolla al merlot).</li><li><em>Pez</em>: Base de crostini crocante con cremoso de queso crema, aceitunas y pistachos, coronado con salmón ahumado, toques de aceite de sésamo, alcaparras fritas y parmesano.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Sangría fresca o sangría caprina.</li><li>Valpo mule con y sin alcohol.</li></ul></div><div class=\"popup-direccion\">📍 Papudo 557, Cerro Concepción<br>⏰ Última ronda 22:15 · Cierre 22:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Kapura\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/NYGmJqQ2FXqsquMt9\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"kapura_valparaiso\" href=\"https://www.instagram.com/kapura_valparaiso\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.042783, "lon": -71.629542, "name": "Fat Kid", "html": "<div class=\"popup-header\"><h3>Fat Kid</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Sopaipiburger</em>: Smashed burger de carne angus argentina, cuatro mini láminas de queso cheddar, pepinillos, salsa FAT y pebre, montada en tres sopaipillas tamaño cóctel.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Cool navegado</em>: Navegado frío en base a vino tinto, rodajas de naranja, canela, syrup simple y mermelada de frutilla.</li></ul></div><div class=\"popup-direccion\">📍 Lautaro Rosas 450, Cerro Alegre<br>⏰ Última ronda 23:30 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Fat Kid\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/dyttRfHkYfBUhQPj8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"fatkidburgers\" href=\"https://www.instagram.com/fatkidburgers\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.042112, "lon": -71.627262, "name": "Quinto Rumbo", "html": "<div class=\"popup-header\"><h3>Quinto Rumbo</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Churrasca con cerdo a la chilena deshilachado, cebolla al escabeche, alioli de ají verde, brotes de cilantro.</li><li><em>Vegano</em>: Churrasca con mechada de hongos a la chilena y not ají verde.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa navegado sour (frío).</li><li>Sangría de la casa.</li></ul></div><div class=\"popup-direccion\">📍 Pilcomayo 529, Cerro Concepción<br>⏰ Última ronda 23:00 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Quinto Rumbo\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/9o77QR4Pc13MjG4T7\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"quintorumbo.cocinaybar\" href=\"https://www.instagram.com/quintorumbo.cocinaybar\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.040985, "lon": -71.627159, "name": "Café Gálvez", "html": "<div class=\"popup-header\"><h3>Café Gálvez</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Empanadita horneada de mechada</em>: Carne desmechada en salsa de verduras y queso gauda.</li><li><em>Empanadita capresse (vegetariana)</em>: Tomate cherry, aceite de albahaca y queso gauda.</li><li><em>Delicia de vino</em>: Maicena rellena de suave queso mascarpone y cubierta con jalea de vino (Rosé, Pinot Noir o Chardonnay).</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Cold brew navegado</em>: Café de Guatemala extraído en frío por 24 hrs, syrup de vino navegado con especias, agua tónica y naranja deshidratada.</li><li><em>Orange maqui</em>: Infusión fría de maqui con néctar de naranja y cubierta con polvo de maqui.</li></ul></div><div class=\"popup-direccion\">📍 Gálvez 233, local 4, Cerro Concepción<br>⏰ Última ronda 22:00 · Cierre 22:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Café Gálvez\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/Turjpp2KovRa6H497\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"galvez.cafeteria\" href=\"https://www.instagram.com/galvez.cafeteria\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.043512, "lon": -71.627658, "name": "La Casa del Jardín Dimalow", "html": "<div class=\"popup-header\"><h3>La Casa del Jardín Dimalow</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Rollito en masa de hoja relleno con longaniza de Chillán, topping de lactonesa al merkén.</li><li>Pastelera cremosa de choclo con pino artesanal de champiñones salteados (vegan).</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Verde Jardín</em>: Sauvignon blanc, melón, pisco y limón, una versión fresca del clásico melón con vino.</li><li><em>Jardín del Sur</em>: Cabernet sauvignon, pisco, naranja, limón y especias, una reinterpretación del tradicional navegado.</li><li><em>Sombra del Jardín</em>: Carmenere, pisco, espresso, naranja y especias.</li></ul></div><div class=\"popup-direccion\">📍 Paseo Dimalow 263, Cerro Alegre<br>⏰ Última ronda 22:30 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"La Casa del Jardín Dimalow\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/bZgnLtZc1TbZY9m99\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"lacasadeljardin.dimalow\" href=\"https://www.instagram.com/lacasadeljardin.dimalow\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04216, "lon": -71.626982, "name": "Raíz Chilena", "html": "<div class=\"popup-header\"><h3>Raíz Chilena</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Pincho parrillero</em>: Verduras, lomo y longaniza.</li><li><em>Empanada de pino</em>: Pino de carne desmechada, huevo y aceituna.</li><li><em>Empanada vegetariana</em>: Champiñones, albahaca, huevo y aceituna.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Sangría Raíz</em>: Vino tinto, pisco, cítricos, fruta fresca y un toque de soda.</li><li><em>Pisco Sour</em>: Pisco y limón.</li></ul></div><div class=\"popup-direccion\">📍 Abtao 550, Cerro Concepción<br>⏰ Última ronda 22:30 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Raíz Chilena\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/D3DmZg3TVxUswBxF9\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"raizchilena.cl\" href=\"https://www.instagram.com/raizchilena.cl\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04346, "lon": -71.62819, "name": "Café Vinilo", "html": "<div class=\"popup-header\"><h3>Café Vinilo</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Pastelito criollo de carne</em>: Masa rellena de carne desmechada con verduras, champiñones y reducción de vino tinto con queso mantecoso gratinado en horno de barro.</li><li><em>Pastelito criollo vegetariano</em>: Masa horneada a la leña, rellena con champiñones asados, mermelada artesanal de cebolla caramelizada y queso mantecoso fundido.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa de vino carmenere orgánico Emiliana.</li><li>Carmenere sour.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 454, Cerro Alegre<br>⏰ Última ronda 01:00 · Cierre 02:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Café Vinilo\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/TiL34KXiaNfC6vxy8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"vinilocafe\" href=\"https://www.instagram.com/vinilocafe\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.041853, "lon": -71.629005, "name": "Aida's Pizzería", "html": "<div class=\"popup-header\"><h3>Aida's Pizzería</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Canoa pastelera</em>: Masa rellena con pastelera de choclo y pino de carne.</li><li><em>Vegetariano</em>: Fainá de garbanzos con zapallo.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Sangría blanca.</li><li>Copa de vino.</li><li>Mocktail de naranja.</li></ul></div><div class=\"popup-direccion\">📍 Urriola 518, Cerro Alegre<br>⏰ Última ronda 23:00 · Cierre 23:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Aida's Pizzería\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/puJxSEekvB9Lz2tt8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"aidas.pizzeria\" href=\"https://www.instagram.com/aidas.pizzeria\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04368, "lon": -71.6281, "name": "Cocina Puerto", "html": "<div class=\"popup-header\"><h3>Cocina Puerto</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Papa al pesto rellena con merluza al pilpil.</li><li>Papa con betarraga rellena de lomo de cerdo y berries.</li><li><em>Vegana</em>: Brocheta de tofu marinado a la chilena, uvas y cebolla encurtida con veganesa de ajo y escamas de champiñón.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Tinto sour</em>: Vino tinto de la casa en versión sour.</li><li><em>Melón con vino</em>: Un clásico con fruta y vino blanco.</li><li><em>Mocktail</em>: Jugo natural de sandía con notas cítricas, syrup de arándanos y soda.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 455, Cerro Alegre<br>⏰ Última ronda 23:00 · Cierre 23:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Cocina Puerto\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/UQUZM71h17bU2YqCA\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"cocinapuerto_valpo\" href=\"https://www.instagram.com/cocinapuerto_valpo\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04338, "lon": -71.62815, "name": "Espacio Raíz", "html": "<div class=\"popup-header\"><h3>Espacio Raíz</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Canastita de sopaipillas con calugas de pescado.</li><li>Canastita de sopaipillas con ceviche de reineta.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Navegado.</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 438, Cerro Alegre<br>⏰ Última ronda 23:00 · Cierre 01:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Espacio Raíz\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/QYHYPUFw4A6BsX7c9\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"espacioraizvalpo\" href=\"https://www.instagram.com/espacioraizvalpo\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04378, "lon": -71.62694, "name": "Fauna", "html": "<div class=\"popup-header\"><h3>Fauna</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Ceviche de cochayuyo con pebre de quinoa, palta y crostini de la casa.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa de vino (sugerencia In Situ Reserva Sauvignon Blanc).</li></ul></div><div class=\"popup-direccion\">📍 Paseo Dimalow 166, Cerro Alegre<br>⏰ Última ronda 21:45 · Cierre 23:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Fauna\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/D24qUKQB566eQn7G6\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"faunahotelrestaurante\" href=\"https://www.instagram.com/faunahotelrestaurante\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.042322, "lon": -71.627779, "name": "Don César", "html": "<div class=\"popup-header\"><h3>Don César</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Trozos de lomo liso a la parrilla con berenjena en escabeche sobre pan tostado.</li><li>Trozos de chorizo de cerdo con salsa de pimentón asado sobre pan tostado.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa de vino tinto de la casa.</li></ul></div><div class=\"popup-direccion\">📍 Templeman 484, Cerro Concepción<br>⏰ Última ronda 22:00 · Cierre 22:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Don César\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/cwzcp2aYna9qAuFR8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"parrilla.doncesar\" href=\"https://www.instagram.com/parrilla.doncesar\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04253, "lon": -71.62805, "name": "Corazón Continto", "html": "<div class=\"popup-header\"><h3>Corazón Continto</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Pincho de papas mayo y pescado frito</em>: Hojaldre de papas al limón y hierbas, pescado en tempura, toques de piure y alioli al limón.</li><li>Milcao, carne desmechada y espuma de pebre.</li><li>Mini pastel de choclo vegano.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li><em>Pomelo spritz</em>: Espumante con un toque pisco, mix de cítricos, syrup de pomelo y agua mineral.</li></ul></div><div class=\"popup-direccion\">📍 Templeman 561, Cerro Concepción<br>⏰ Última ronda 23:30 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Corazón Continto\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/9wUN42o3xMv4B7nj7\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"corazoncontinto.cl\" href=\"https://www.instagram.com/corazoncontinto.cl\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.0435, "lon": -71.62736, "name": "Hotzenplotz Alegre", "html": "<div class=\"popup-header\"><h3>Hotzenplotz Alegre</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li>Bruschetta con crudo alemán.</li><li>Bruschetta con crudo vegan.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Copa de vino (vinos naturales).</li></ul></div><div class=\"popup-direccion\">📍 Almirante Montt 217, Cerro Alegre<br>⏰ Última ronda 23:00 · Cierre 23:30</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Hotzenplotz Alegre\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/EnszhcNwMXky9zDC8\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"hotzenplotz_alegre\" href=\"https://www.instagram.com/hotzenplotz_alegre\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}, {"lat": -33.04278, "lon": -71.627245, "name": "Jardín Cervecero", "html": "<div class=\"popup-header\"><h3>Jardín Cervecero</h3><button class=\"popup-close\" onclick=\"cerrarPopup()\" aria-label=\"Cerrar\">×</button></div><div class=\"popup-scroll\"><div class=\"popup-body\"><div class=\"popup-section\"><div class=\"popup-label\">🍽️ Tapas</div><ul><li><em>Croqueta de longaniza</em>: Salsa bechamel, longaniza, apanada en panko y aderezo de chancho en piedra.</li><li><em>Chorito maltón al alicate</em>: Chorito, cebolla, tomate y queso gratinado.</li><li><em>(Veg) Berenjena asada</em>: Berenjena apanada en panko con toping de hummus y vegetales encurtidos.</li></ul></div><div class=\"popup-section\"><div class=\"popup-label\">🍷 Copas</div><ul><li>Chardonnay sour.</li><li>Vino Carmenere.</li><li>Vino Sauvingnon Blanc.</li></ul></div><div class=\"popup-direccion\">📍 Concepción 499, Cerro Concepción<br>⏰ Última ronda 23:00 · Cierre 00:00</div><div class=\"popup-visita\"><label><input type=\"checkbox\" class=\"chk-visita\" data-local=\"Jardín Cervecero\"> He visitado este local</label></div></div></div><div class=\"popup-actions\"><a class=\"popup-btn popup-btn-primary\" href=\"https://maps.app.goo.gl/BxX2pAk2hftXNnbJ9\" target=\"_blank\" rel=\"noopener\">Cómo llegar</a><a class=\"popup-btn popup-btn-outline ig-link\" data-user=\"jardincervecero_cl\" href=\"https://www.instagram.com/jardincervecero_cl\" target=\"_blank\" rel=\"noopener\">Instagram</a></div>"}];
+
+  // En pantallas anchas (computador) se ve mucho más área geográfica que en un
+  // celular con el mismo nivel de zoom, así que lo compensamos según el ancho real
+  var anchoPantalla = window.innerWidth;
+  var zoomInicial = anchoPantalla > 900 ? 17.4 : 16.3;
+
+  var map = new maplibregl.Map({
+    container: 'mapa',
+    style: 'https://tiles.openfreemap.org/styles/liberty',
+    center: [-71.6278, -33.0426],
+    zoom: zoomInicial,
+    attributionControl: true,
+    dragRotate: false,      // bloquea el giro con clic derecho / dos dedos + arrastre
+    pitchWithRotate: false, // evita que el gesto de inclinar también gire el mapa
+    touchPitch: false       // evita la inclinación 3D por gesto táctil
+  });
+
+  // Refuerzo: bloquea también el giro con gesto táctil de pellizco-rotar
+  // (deja el zoom con pellizco intacto) y con teclado (Shift + flechas).
+  map.touchZoomRotate.disableRotation();
+  map.keyboard.disableRotation();
+
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+  // Botón para ubicar al usuario en el mapa
+  map.addControl(new maplibregl.GeolocateControl({
+    positionOptions: { enableHighAccuracy: true },
+    trackUserLocation: true,
+    showUserHeading: true
+  }), 'top-right');
+
+  function limpiarEstilo() {
+    var estilo = map.getStyle();
+    var palabrasClaveMantener = ['road', 'highway', 'street', 'transportation', 'bridge', 'tunnel', 'path', 'ferry', 'pedestrian', 'service', 'residential', 'track', 'cycle', 'steps', 'trail', 'walkway', 'lane', 'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'major'];
+
+    var capasFiltradas = estilo.layers.filter(function(capa) {
+      var id = capa.id.toLowerCase();
+      if (capa.type === 'background') return true;
+      if (id.indexOf('water') !== -1 && capa.type === 'fill') return true;
+      for (var i = 0; i < palabrasClaveMantener.length; i++) {
+        if (id.indexOf(palabrasClaveMantener[i]) !== -1) return true;
+      }
+      return false;
+    });
+
+    capasFiltradas.forEach(function(capa) {
+      if (capa.type === 'background') {
+        capa.paint = capa.paint || {};
+        capa.paint['background-color'] = '#eeeeee';
+      }
+      if (capa.id.toLowerCase().indexOf('water') !== -1 && capa.type === 'fill') {
+        capa.paint = capa.paint || {};
+        capa.paint['fill-color'] = '#dddddd';
+      }
+    });
+
+    // Reemplazamos cualquier color (incluido el amarillo típico de calles
+    // secundarias) por una paleta de grises, según la importancia de la vía
+    capasFiltradas.forEach(function(capa) {
+      if (capa.type === 'line') {
+        capa.paint = capa.paint || {};
+        var id = capa.id.toLowerCase();
+        if (id.indexOf('motorway') !== -1 || id.indexOf('trunk') !== -1) {
+          capa.paint['line-color'] = '#8f8f8f';
+        } else if (id.indexOf('primary') !== -1) {
+          capa.paint['line-color'] = '#a8a8a8';
+        } else {
+          capa.paint['line-color'] = '#c5c5c5';
+        }
+      }
+      if (capa.type === 'symbol' && capa.paint && capa.paint['text-color']) {
+        capa.paint['text-color'] = '#6a6a6a';
+        capa.paint['text-halo-color'] = '#ffffff';
+        capa.paint['text-halo-width'] = 1.2;
+      }
+    });
+
+    estilo.layers = capasFiltradas;
+    map.setStyle(estilo);
+  }
+
+  map.on('load', function() {
+    limpiarEstilo();
+    document.getElementById('loader').style.opacity = '0';
+    setTimeout(function() {
+      document.getElementById('loader').style.display = 'none';
+    }, 300);
+  });
+
+  setTimeout(function() {
+    document.getElementById('loader').style.display = 'none';
+  }, 6000);
+
+  // ===== Tarjeta fija en pantalla, con el mapa siempre interactivo detrás =====
+  var modalBackdrop = document.getElementById('modal-backdrop');
+  var modalContent = document.getElementById('modal-content');
+  var popupAbierto = false;
+
+  function abrirPopup(htmlContenido) {
+    modalContent.innerHTML = htmlContenido;
+    modalBackdrop.classList.add('activo');
+    popupAbierto = true;
+    // Esperamos un frame a que el navegador termine de dibujar el contenido
+    // nuevo antes de resetear el scroll — así el "inicio desde arriba" es 100% confiable
+    requestAnimationFrame(function() {
+      var scrollDiv = modalContent.querySelector('.popup-scroll');
+      if (scrollDiv) scrollDiv.scrollTop = 0;
+    });
+    // Si este popup tiene la casilla "He visitado este local", reflejamos
+    // el estado guardado localmente de visitas anteriores.
+    var chk = modalContent.querySelector('.chk-visita');
+    if (chk && window.visitasGuardadas) {
+      chk.checked = window.visitasGuardadas.indexOf(chk.dataset.local) !== -1;
+    }
+  }
+
+  function cerrarPopup() {
+    modalBackdrop.classList.remove('activo');
+    popupAbierto = false;
+  }
+
+  // 1) Cerrar al tocar fuera de la tarjeta (en cualquier parte, incluido el mapa)
+  document.addEventListener('click', function(e) {
+    if (!popupAbierto) return;
+    var card = document.getElementById('modal-card');
+    var esUnPin = e.target.closest ? e.target.closest('.marcador-wrap') : null;
+    if (!card.contains(e.target) && !esUnPin) {
+      cerrarPopup();
+    }
+  });
+
+  // 2) Cerrar al arrastrar o hacer zoom en el mapa (el mapa queda libre para navegar)
+  map.on('dragstart', function() {
+    if (popupAbierto) cerrarPopup();
+  });
+  map.on('zoomstart', function(e) {
+    // Ignoramos el zoom que a veces dispara el propio navegador al abrir/cerrar
+    // teclado en inputs; solo nos importa el zoom manual del usuario (pellizco/rueda)
+    if (popupAbierto && e.originalEvent) cerrarPopup();
+  });
+
+  var svgPin = '<svg class="marcador-pin" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 32" width="29" height="36">' +
+    '<path d="M6,2 H20 A4,4 0 0 1 24,6 V16 A4,4 0 0 1 20,20 H16 Q13,20 13,24 Q13,20 10,20 H6 A4,4 0 0 1 2,16 V6 A4,4 0 0 1 6,2 Z" fill="#7c294b"/>' +
+    '</svg>';
+
+  var LOGO_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAACXBIWXMAAAsSAAALEgHS3X78AAAE+klEQVR4nO2b7ZWbOBSGn9mz/8cdDKkgTgWhgzgVDK5gvBWMU8HOVBBSwXoqWFJBcAekA7sC7Q+hBWODkC4ynnP0nMMxxkIfL5Lu1RW+U0oR8eePuSvw3okCCokCCokCCokCCokCCokCCokCCokCCokCCokCCokCCokCCokCCokCCvlz7grcMEl9LIBlfS0HqnaisQKazNLO9aI+3jtpfSzR7fzYk+4AvJxcUUoNHZlS6qCGWVnyuNUjU0rtLG3rsu3mY+uBCXBvSZPX6Q6WdLfCFthgb9cobEYkHZHHPbpSt84SKIFnJhIPpjMiT8CO250Pl+i6uQp3RIteokdY3k1wp4Z35SrgYWRhexprJWWJtn7QGLCi/l6cpR5mgW6Hi3g/0cZiZ01pmWhd2Qgm9YVS6kXZjZZSevLP6nts+eYO9T8oR6Noa5ArB6XU0qUC9bFUSlUe5SmlRe/LNwld96EfU88GKaXFMD2pVBfMf+tYKH/xDHlP3i69Lx2oo5OAC6WHYilsVJe+SkxVTlcAlxHU9wCsR9sKL9D+0WQ+Uot9z/Ut/V6/KxtODUzmcK/dWPRgrPAG3ZiphTP85LJPeZiwzCON5QYt5ueR9975FmoEdClsDHsa/6moP7ssgV8TlgnwgWax7/LWlLeAZghXnAp4RPeOsT5glzH+4MKe5IxX9HD7t+f3BN2W1DHfBZ5LUbOUK4EfwBr9FBe4zSHXIudyb+7i+nAy55rUmB74MpgqDGOE6LJiuKcU9afrimiL7tmVa4XmDKj6DJnngd/efCuCNmQF+gE5Pdi5Q/q/J8xLOooe0EYtx6EHzx3SL/E3VG1emS4S9Fgf0ERjDIfW9xyoQi3lxnrymaAMQxkoXxsopWYfwjmyYfzGZZelEuTpxNwCgp64fVjTb5UL79o4cgsC+gRhv3EhOtxBYpVtHM3JkIBpwAq0yTzuKUakCenb/m9YQvXAMSuBpK6Izxr8ZUQZBTqIEZRQAtqGpXFYfUNZHxkXgtp45j+aOebAFfAP8jDWZ86nmRW6d2b19xJtbKamMifXdqSX2Cd/F9pB1KTO2zyYFC1kXv82tAx0pTIn1+6BL0wbtP2CbkzGqXigVxN5fb4lTE+8qoAZ0wZtDQ/A9568H2nemsiBT/RvL3gRSsD0wjWXCf038JWWvyWgXW6JnkbWyFZAwd2YLgnjLe5bnX6H/yqlzaWVSl6X8QntlI9xd/Y0QefCXAxlRBLL9yHaDS6Av4C/BXUZeghm38bQfpnSUDGwtr6WgKnDvStO9yiMW+LjM37DLUB6wHEdHWoIJ4J77zl3dQrPvHzvG00oAaVB0i9o65miRXjyzCcT1sNKSCPSnkt8NpCe0duXEtfnkcAbZiEFTFrnVcBybDwRsCdeswdOuYHkynemcYnOuJaAMP/rv1O9PXtCSAG78bo5Nu+DEzIi3Z38S64Q4OzhiOAVtiFCL+WSzvepA5x79NLqK8NBghQ/T8DKtQUs0asDKSbYYOKLO7RIl0RcE0g8CC9geuHaFr0o9+UVLVx3SB44F3HNtAHcM0JHpJOe6xnNSiPh/H8h3ZWMecViy7A1NyJmNC93BiW0gEM7ZxVhesf5PyoDMvRPpYzTHtR+saZLMVmN3hm2v3pFLNzCqx3vmiigkCigkCigkCigkCigkCigkCigkCigkCigkCigkCigkCigkCigkP8As0hfdP8r7/EAAAAASUVORK5CYII=';
+
+  // ===== Orden de apilamiento entre marcadores vecinos =====
+  // Cada marcador (etiqueta + pin) es un solo elemento posicionado con
+  // transform, así que compite con sus vecinos por z-index como una
+  // unidad. Para que las etiquetas no queden tapadas por el pin de un
+  // local vecino (sin mover ningún pin de su lugar), ordenamos los
+  // marcadores de norte a sur y les damos un z-index creciente: los
+  // locales más al sur (que se ven más abajo en el mapa) quedan "más
+  // adelante" y su etiqueta, que sobresale hacia arriba, pasa por
+  // encima del pin del vecino de más al norte.
+  var localesPorLatitud = locales.slice().sort(function(a, b) { return b.lat - a.lat; });
+  var zIndexPorLocal = {};
+  localesPorLatitud.forEach(function(local, i) {
+    zIndexPorLocal[local.name] = i + 1;
+  });
+
+  locales.forEach(function(local) {
+    var wrap = document.createElement('div');
+    wrap.className = 'marcador-wrap';
+    wrap.style.zIndex = zIndexPorLocal[local.name];
+
+    var etiqueta = document.createElement('div');
+    etiqueta.className = 'marcador-etiqueta';
+    etiqueta.textContent = local.name;
+    wrap.appendChild(etiqueta);
+
+    // Contenedor del pin: el SVG de fondo + el logo superpuesto
+    var pinBox = document.createElement('div');
+    pinBox.style.position = 'relative';
+    pinBox.innerHTML = svgPin;
+
+    var logoImg = document.createElement('img');
+    logoImg.src = 'data:image/png;base64,' + LOGO_BASE64;
+    logoImg.className = 'marcador-logo';
+    pinBox.appendChild(logoImg);
+
+    wrap.appendChild(pinBox);
+
+    wrap.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      abrirPopup(local.html);
+    });
+
+    // Detectamos si este local menciona opciones veganas/vegetarianas, o
+    // mocktail/sin alcohol/zero, buscando esas palabras clave en su información
+    var textoLocal = local.html.toLowerCase();
+    var esVegano = /vegan|vegetarian/.test(textoLocal);
+    var esMocktail = /mocktail|sin alcohol|\bzero\b/.test(textoLocal);
+    wrap.dataset.vegano = esVegano ? '1' : '0';
+    wrap.dataset.mocktail = esMocktail ? '1' : '0';
+
+    new maplibregl.Marker({ element: wrap, anchor: 'bottom' })
+      .setLngLat([local.lon, local.lat])
+      .addTo(map);
+  });
+
+  // ===== Puntos de transporte (van) e información (guía de la ruta) =====
+  var puntosTransporte = [
+    { lat: -33.037989, lon: -71.62793 },
+    { lat: -33.042618, lon: -71.626998 },
+    { lat: -33.040787, lon: -71.629485 }
+  ];
+  var textoTransporte = '🚐 Aprovecha y muévete en las van disponibles para la ruta.\n\n' +
+    '**Subida: $1.000**\n**Bajada: $1.000**\n\n' +
+    '📍 Descubre los otros puntos de recogida en este mapa';
+
+  var puntosInfo = [
+    { lat: -33.043125, lon: -71.629148 },
+    { lat: -33.041811, lon: -71.628853 },
+    { lat: -33.042499, lon: -71.627378 },
+    { lat: -33.042679, lon: -71.628435 },
+    { lat: -33.041161, lon: -71.629261 }
+  ];
+  var textoInfo = '💬 ¿Tienes alguna duda?\n\nUbica a nuestro guía para informaciones y ayuda sobre la ruta';
+
+  function textoAHtml(texto) {
+    return texto
+      .split('\n\n')
+      .map(function(parrafo) {
+        var conNegrita = parrafo.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        return '<p>' + conNegrita + '</p>';
+      })
+      .join('');
+  }
+
+  var svgPinTransporte = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 38" width="28" height="35">' +
+    '<path d="M15,2 A11,11 0 0 1 26,13 C26,20 15,32 15,32 C15,32 4,20 4,13 A11,11 0 0 1 15,2 Z" fill="#2a7a6b"/>' +
+    '<rect x="8.5" y="8.5" width="13" height="8.5" rx="2.3" fill="#fff"/>' +
+    '<circle cx="11.3" cy="17.3" r="1.7" fill="#2a7a6b"/>' +
+    '<circle cx="18.7" cy="17.3" r="1.7" fill="#2a7a6b"/>' +
+    '</svg>';
+
+  var svgPinInfo = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 38" width="28" height="35">' +
+    '<path d="M15,2 A11,11 0 0 1 26,13 C26,20 15,32 15,32 C15,32 4,20 4,13 A11,11 0 0 1 15,2 Z" fill="#2a7a6b"/>' +
+    '<text x="15" y="18.5" text-anchor="middle" font-size="14" font-weight="700" font-family="Georgia, serif" fill="#fff">i</text>' +
+    '</svg>';
+
+  function agregarPuntoUtilitario(punto, svg, tituloPopup, texto) {
+    var el = document.createElement('div');
+    el.innerHTML = svg;
+
+    var htmlPopup = '<div class="popup-header"><h3>' + tituloPopup + '</h3></div>' +
+      '<div class="popup-scroll"><div class="popup-body popup-body-utilitario">' + textoAHtml(texto) + '</div></div>';
+
+    el.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      abrirPopup(htmlPopup);
+    });
+
+    new maplibregl.Marker({ element: el, anchor: 'bottom' })
+      .setLngLat([punto.lon, punto.lat])
+      .addTo(map);
+  }
+
+  puntosTransporte.forEach(function(p) {
+    agregarPuntoUtilitario(p, svgPinTransporte, '🚐 Punto de transporte', textoTransporte);
+  });
+  puntosInfo.forEach(function(p) {
+    agregarPuntoUtilitario(p, svgPinInfo, '💬 ¿Tienes alguna duda?', textoInfo);
+  });
+
+  // ===== Intento de apertura en la app de Instagram (con respaldo automático a la web) =====
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest ? e.target.closest('.ig-link') : null;
+    if (!link) return;
+
+    var username = link.getAttribute('data-user');
+    if (!username) return;
+
+    e.preventDefault();
+    var urlWeb = link.href;
+    var urlApp = 'instagram://user?username=' + username;
+    var inicio = Date.now();
+
+    window.location = urlApp;
+
+    setTimeout(function() {
+      if (Date.now() - inicio < 2000) {
+        window.open(urlWeb, '_blank');
+      }
+    }, 1200);
+  });
+</script>
+
+<!-- ===== Script nuevo e independiente: registro de usuarios ===== -->
+<!-- No modifica ni depende del script del mapa de arriba. -->
+<script>
+(function() {
+  // TODO: reemplaza esta URL por la de tu Google Apps Script Web App
+  // (ver instrucciones de despliegue que te entrego aparte).
+  var URL_REGISTRO = 'https://script.google.com/macros/s/AKfycbyUHuJuYriWAsTf1e57pTw2lB-P7r-SHc8JERF-1KC0f2tlNuJhSMeuRuSohbrWlE4/exec';
+
+  var backdrop = document.getElementById('registro-backdrop');
+  var form = document.getElementById('form-registro');
+  var msg = document.getElementById('registro-msg');
+  var submitBtn = document.getElementById('registro-submit');
+
+  function abrirRegistro() {
+    backdrop.classList.add('activo');
+  }
+  function cerrarRegistro() {
+    backdrop.classList.remove('activo');
+  }
+
+  // El registro es obligatorio: no hay botón "×" ni cierre al hacer clic
+  // fuera de la tarjeta. Solo se cierra al completar el formulario con
+  // éxito (ver más abajo, dentro del .then()).
+  // Se muestra automáticamente al cargar la página, pero solo una vez por
+  // visitante: si ya se registró antes en este dispositivo (ver flag
+  // guardada en el .then() de éxito), no se vuelve a mostrar.
+  window.addEventListener('load', function() {
+    var yaRegistrado = false;
+    try { yaRegistrado = localStorage.getItem('tyc_registrado') === '1'; } catch (err) {}
+    if (!yaRegistrado) abrirRegistro();
+  });
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    msg.textContent = '';
+    msg.className = 'registro-msg';
+
+    var datos = {
+      nombre: document.getElementById('reg-nombre').value.trim(),
+      email: document.getElementById('reg-email').value.trim(),
+      region: document.getElementById('reg-region').value.trim(),
+      ciudad: document.getElementById('reg-region').value.trim(), // duplicado por compatibilidad, en caso de que el backend todavía use "ciudad"
+      consentimiento: document.getElementById('reg-consentimiento').checked,
+      fecha: new Date().toISOString()
+    };
+
+    if (!datos.nombre || !datos.email || !datos.region) {
+      msg.textContent = 'Por favor completa todos los campos.';
+      msg.classList.add('error');
+      return;
+    }
+    var EMAIL_VALIDO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!EMAIL_VALIDO.test(datos.email)) {
+      msg.textContent = 'Ingresa un correo electrónico válido.';
+      msg.classList.add('error');
+      return;
+    }
+    if (!datos.consentimiento) {
+      msg.textContent = 'Debes aceptar el uso de tus datos para continuar.';
+      msg.classList.add('error');
+      return;
+    }
+    if (URL_REGISTRO.indexOf('TU_ID_DE_DESPLIEGUE') !== -1) {
+      msg.textContent = 'Falta configurar la URL de destino (ver instrucciones).';
+      msg.classList.add('error');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Enviando...';
+
+    fetch(URL_REGISTRO, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(datos)
+    })
+      .then(function(res) { return res.json(); })
+      .then(function(res) {
+        if (res && res.status === 'ok') {
+          // Guardamos nombre y correo localmente para poder asociarlos a las
+          // marcas de "visité este local" que el usuario haga después.
+          try {
+            localStorage.setItem('tyc_nombre', datos.nombre);
+            localStorage.setItem('tyc_email', datos.email);
+            localStorage.setItem('tyc_registrado', '1');
+          } catch (err) {}
+          if (typeof gtag === 'function') {
+            gtag('event', 'registro_ruta', { region: datos.region });
+          }
+          form.reset();
+          msg.textContent = '¡Gracias! Te avisaremos de novedades pronto.';
+          msg.classList.add('exito');
+          setTimeout(cerrarRegistro, 1800);
+        } else {
+          throw new Error('Respuesta inesperada');
+        }
+      })
+      .catch(function() {
+        msg.textContent = 'Hubo un problema al enviar tus datos. Intenta de nuevo.';
+        msg.classList.add('error');
+      })
+      .finally(function() {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Enviar';
+      });
+  });
+})();
+</script>
+
+<!-- ===== Script nuevo e independiente: casilla "He visitado este local" ===== -->
+<!-- No modifica el script del mapa ni el de registro. Reutiliza la misma URL
+     de Google Apps Script (URL_REGISTRO) agregando "tipo":"visita" para que
+     el backend pueda distinguir ambos tipos de registro en la planilla/CSV. -->
+<script>
+(function() {
+  var URL_VISITAS = 'https://script.google.com/macros/s/AKfycbyUHuJuYriWAsTf1e57pTw2lB-P7r-SHc8JERF-1KC0f2tlNuJhSMeuRuSohbrWlE4/exec';
+
+  // Cargamos, si existen, las visitas ya marcadas en este dispositivo para
+  // no perder el estado al reabrir un popup (ver uso en abrirPopup, arriba).
+  try {
+    window.visitasGuardadas = JSON.parse(localStorage.getItem('tyc_visitas') || '[]');
+  } catch (err) {
+    window.visitasGuardadas = [];
+  }
+
+  function guardarVisitaLocal(nombreLocal, visitado) {
+    var lista = window.visitasGuardadas || [];
+    var idx = lista.indexOf(nombreLocal);
+    if (visitado && idx === -1) lista.push(nombreLocal);
+    if (!visitado && idx !== -1) lista.splice(idx, 1);
+    window.visitasGuardadas = lista;
+    try { localStorage.setItem('tyc_visitas', JSON.stringify(lista)); } catch (err) {}
+  }
+
+  document.addEventListener('change', function(e) {
+    var chk = e.target.closest ? e.target.closest('.chk-visita') : null;
+    if (!chk) return;
+
+    var nombreLocal = chk.dataset.local;
+    var visitado = chk.checked;
+    guardarVisitaLocal(nombreLocal, visitado);
+
+    if (typeof gtag === 'function') {
+      gtag('event', 'visita_local', { local: nombreLocal, visitado: visitado });
+    }
+
+    var datos = {
+      tipo: 'visita',
+      local: nombreLocal,
+      visitado: visitado,
+      nombre: (function() { try { return localStorage.getItem('tyc_nombre') || ''; } catch (err) { return ''; } })(),
+      email: (function() { try { return localStorage.getItem('tyc_email') || ''; } catch (err) { return ''; } })(),
+      fecha: new Date().toISOString()
+    };
+
+    if (URL_VISITAS.indexOf('TU_ID_DE_DESPLIEGUE') !== -1) return;
+
+    fetch(URL_VISITAS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(datos)
+    }).catch(function() {
+      // Si falla el envío, el estado igual queda guardado en localStorage
+      // y el checkbox refleja lo que el usuario marcó.
+    });
+  });
+})();
+</script>
+
+</body>
+</html>
